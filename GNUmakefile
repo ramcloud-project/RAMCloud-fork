@@ -467,8 +467,10 @@ INSTALL_INCLUDES := \
     src/ServerIdRpcWrapper.h \
     src/ServerMetrics.h \
     src/ServiceMask.h \
+    src/ShortMacros.h \
     src/SpinLock.h \
     src/Status.h \
+    src/TableEnumerator.h \
     src/TestLog.h \
     src/Transaction.h \
     src/Transport.h \
