@@ -2893,7 +2893,7 @@ Status
 ObjectManager::rejectOperation(const RejectRules* rejectRules, uint64_t version)
 {
     if (version == VERSION_NONEXISTENT) {
-        if (rejectRules->doesntExist)
+        if (rejectRules->doesntExist || rejectRules->versionLeGiven || rejectRules->versionNeGiven)
             return STATUS_OBJECT_DOESNT_EXIST;
         return STATUS_OK;
     }
