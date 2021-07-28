@@ -50,14 +50,14 @@ class Infiniband {
     // back and forth.
     class QueuePairTuple {
       public:
-        QueuePairTuple() : qpn(0), psn(0), lid(0), nonce(0)
+        QueuePairTuple() : qpn(0), psn(0), lid(0), nonce(0), gidIndex(0)
         {
-            static_assert(sizeof(QueuePairTuple) == 68,
-                              "QueuePairTuple has unexpected size");
+            memset(&gid, 0, sizeof(gid));
         }
         QueuePairTuple(uint16_t lid, uint32_t qpn, uint32_t psn,
-                       uint64_t nonce, const char* peerName = "?unknown?")
-            : qpn(qpn), psn(psn), lid(lid), nonce(nonce)
+                       uint64_t nonce, uint8_t gidIndex, ibv_gid gid,
+                       const char* peerName = "?unknown?")
+            : qpn(qpn), psn(psn), lid(lid), nonce(nonce), gidIndex(gidIndex), gid(gid)
         {
             snprintf(this->peerName, sizeof(this->peerName), "%s",
                 peerName);
@@ -66,6 +66,8 @@ class Infiniband {
         uint32_t    getQpn() const      { return qpn; }
         uint32_t    getPsn() const      { return psn; }
         uint64_t    getNonce() const    { return nonce; }
+        uint8_t     getGidIndex() const { return gidIndex; }
+        ibv_gid     getGid() const      { return gid; }
         const char* getPeerName() const { return peerName; }
 
       private:
@@ -74,9 +76,13 @@ class Infiniband {
         uint16_t lid;            // infiniband address: "local id"
         uint64_t nonce;          // random nonce used to confirm replies are
                                  // for received requests
+        uint8_t gidIndex;        // index for gid on device
+        ibv_gid gid;             // the gid itself
         char peerName[50];       // Optional name for the sender (intended for
                                  // use in error messages); null-terminated.
     } __attribute__((packed));
+    // TODO: it seems that this is marked ((packed)) in the name of skipping
+    // proper serialization.  Look into a better way of dealing with this.
 
     explicit Infiniband(const char* deviceName);
     ~Infiniband();
@@ -200,7 +206,7 @@ class Infiniband {
         uint16_t    getRemoteLid() const;
         int         getState() const;
         bool        isError() const;
-        void        plumb(QueuePairTuple *qpt);
+        void        plumb(QueuePairTuple *qpt, uint8_t localGidIndex);
         void        setPeerName(const char *peerName);
         const char* getPeerName() const;
         void        activate(const Tub<MacAddress>& localMac);

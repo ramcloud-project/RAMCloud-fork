@@ -49,6 +49,40 @@ namespace RAMCloud {
 
 /**
  * Transport mechanism that uses Infiniband reliable queue pairs.
+ *
+ * IMPORTANT: This class is modified to work with RoCEv2 (using gid and gid index). It
+ * will need modifications for Infiniband devices that don't use RoCEv2. If you choose
+ * to use this transport for RAMCloud server, RAMCloud coordinator, and any of your
+ * RAMCloud client libraries, you will need the following environment variables set:
+ *
+ * - ROCE_DEV
+ * - ROCE_DEVPORT
+ * - ROCE_GID
+ * - ROCE_GID_INDEX
+ *
+ * For the service locator of RAMCloud server and coordinator, you'll also need to set
+ * these fields:
+ *
+ * - dev
+ * - devport
+ * - gid
+ * - gid_index
+ *
+ * You can set them to the same values as their corresponding environment variables.
+ *
+ * Note that ROCE_GID is typically a hexadecimal string that may contain ':' or '-'
+ * characters, and commonly corresponds to a host IP.
+ *
+ * For most RoCE enabled devices, these variables can be figured out. We assume the
+ * list of GID's and their indices do not change on a device for the entire duration
+ * of RAMCloud's run. The main reason we use both gid index and gid itself for a
+ * device is: (1) it is possible to have duplicate entries in the GID table that
+ * correspond to different protocol types (for example: same GID entry appears twice,
+ * once for ROCEv1 mode, and again for ROCEv2 mode) and the index helps to distinguish
+ * entries, (2) most machines need the GID itself to find gid index, saving us the
+ * trouble of calling ibv_query_gid() to go in the opposite direction, (3) gid index
+ * and gid are both required anyhow to setup the queue pairs in the case of RoCEv2.
+ *
  */
 class InfRcTransport : public Transport {
     typedef RAMCloud::Perf::ReadRequestHandle_MetricSet
@@ -351,6 +385,8 @@ class InfRcTransport : public Transport {
     int          clientSetupSocket; // UDP socket for outgoing setup requests
     int          clientPort;        // Port number associated with
                                     // clientSetupSocket
+    uint8_t      gidIndex;          // Index for GID on device
+    ibv_gid      gid;               // The GID itself
 
     // Map ibv_wc.qp_num/qp.LocalQpNumber to InfRcServerPort*.
     // InfRcServePort contains QueuePair* and Alarm* for the port

@@ -77,6 +77,7 @@
 #include <errno.h>
 #include <fcntl.h>
 
+#include <bits/stdc++.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -141,6 +142,45 @@ namespace {
 /// whenever the bytes being copied exceeds this threshold.
 #define LARGE_COPIED_BYTES (1024*1024)
 
+string replaceAll(string str, const string& from, const string& to) {
+    size_t start_pos = 0;
+    while((start_pos = str.find(from, start_pos)) != string::npos) {
+        str.replace(start_pos, from.length(), to);
+        start_pos += to.length(); // Handles case where 'to' is a substring of 'from'
+    }
+    return str;
+}
+
+ibv_gid hexStringToGid(const string& origHexStr)
+{
+    ibv_gid result;
+    string hexStr = origHexStr;
+    hexStr = replaceAll(hexStr, string(":"), string(""));
+    hexStr = replaceAll(hexStr, string("-"), string(""));
+    if (hexStr.length() < 32) {
+        LOG(ERROR, "found fewer than 32 hexadecimal characters in : %s",
+                origHexStr.c_str());
+        result.global.subnet_prefix = 0;
+        result.global.interface_id = 0;
+        return result;
+    }
+    LOG(DEBUG, "converted hex to : %s", hexStr.c_str());
+
+    auto part1 = static_cast<uint32_t>(htonl(std::stoul(hexStr.substr(0, 8), nullptr, 16)));
+    auto part2 = static_cast<uint32_t>(htonl(std::stoul(hexStr.substr(8, 8), nullptr, 16)));
+    uint64_t subnext_prefix = static_cast<uint64_t>(part2) << 32;
+    subnext_prefix |= static_cast<uint64_t>(part1);
+
+    auto part3 = static_cast<uint32_t>(htonl(std::stoul(hexStr.substr(16, 8), nullptr, 16)));
+    auto part4 = static_cast<uint32_t>(htonl(std::stoul(hexStr.substr(24, 8), nullptr, 16)));
+    uint64_t interface_id = static_cast<uint64_t>(part4) << 32;
+    interface_id |= static_cast<uint64_t>(part3);
+
+    result.global.subnet_prefix = subnext_prefix;
+    result.global.interface_id = interface_id;
+    return result;
+}
+
 //------------------------------
 // InfRcTransport class
 //------------------------------
@@ -150,15 +190,16 @@ namespace {
  *
  * \param context
  *      Overall information about the RAMCloud server or client.
- * \param sl
+ * \param local_sl
  *      The ServiceLocator describing which HCA to use and the IP/UDP
- *      address and port numbers to use for handshaking. If NULL,
- *      the transport will be configured for client use only.
+ *      address and port numbers to use for handshaking from local machine.
+ *      If NULL, these fields will instead be pulled from local ROCE
+ *      environment variables.
  * \param clientId
  *      Identifier that identifies us in outgoing RPCs: must be unique across
  *      all servers and clients.
  */
-InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
+InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *local_sl,
         uint64_t clientId)
     : context(context)
     , realInfiniband()
@@ -197,16 +238,66 @@ InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
 {
     const char *ibDeviceName = NULL;
 
-    if (sl != NULL) {
-        locatorString = sl->getOriginalString();
+    if (local_sl != NULL) {
+        // This is ran by server or coordinator initializing a Transport to itself
+        locatorString = local_sl->getOriginalString();
 
         try {
-            ibDeviceName   = sl->getOption<const char *>("dev");
+            ibDeviceName   = local_sl->getOption<const char *>("dev");
         } catch (ServiceLocator::NoSuchKeyException& e) {}
 
         try {
-            ibPhysicalPort = sl->getOption<int>("devport");
+            ibPhysicalPort = local_sl->getOption<int>("devport");
         } catch (ServiceLocator::NoSuchKeyException& e) {}
+
+        try {
+            // NOTE: getOption<uint8_t>() does a "conversation from string to char", which
+            // differs from a conversion from string to base-10 integer in range [0, 255],
+            // so our workaround is to convert to int, then downCast to uint8_t
+            gidIndex = downCast<uint8_t>(local_sl->getOption<int>("gid_index"));
+        } catch (ServiceLocator::NoSuchKeyException& e) {}
+
+        try {
+            string gidHex = local_sl->getOption<const char*>("gid");
+            gid = hexStringToGid(gidHex);
+        } catch (ServiceLocator::NoSuchKeyException& e) {}
+    } else {
+        // Ran by client, server, coordinator initializing a Transport to somewhere else
+        ibDeviceName = getenv("ROCE_DEV");
+        if (!ibDeviceName || strlen(ibDeviceName) == 0) {
+            LOG(ERROR, "Could not find env variable ROCE_DEV");
+            throw TransportException(HERE,
+                "Could not find env variable ROCE_DEV",
+                errno);
+        }
+        const char* env = NULL;
+
+        env = getenv("ROCE_DEVPORT");
+        if (!env || strlen(env) == 0) {
+            LOG(ERROR, "Could not find env variable ROCE_DEVPORT");
+            throw TransportException(HERE,
+                "Could not find env variable ROCE_DEVPORT",
+                errno);
+        }
+        ibPhysicalPort = atoi(env);
+
+        env = getenv("ROCE_GID_INDEX");
+        if (!env || strlen(env) == 0) {
+            LOG(ERROR, "Could not find env variable ROCE_GID_INDEX");
+            throw TransportException(HERE,
+                "Could not find env variable ROCE_GID_INDEX",
+                errno);
+        }
+        gidIndex = downCast<uint8_t>(atoi(env));
+
+        env = getenv("ROCE_GID");
+        if (!env || strlen(env) == 0) {
+            LOG(ERROR, "Could not find env variable ROCE_GID");
+            throw TransportException(HERE,
+                "Could not find env variable ROCE_GID",
+                errno);
+        }
+        gid = hexStringToGid(string(env));
     }
 
     infiniband = realInfiniband.construct(ibDeviceName);
@@ -256,8 +347,8 @@ InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
     clientPort = NTOHS(socketAddress.sin_port);
 
     // If this is a server, create a server setup socket and bind it.
-    if (sl != NULL) {
-        IpAddress address(sl);
+    if (local_sl != NULL) {
+        IpAddress address(local_sl);
 
         serverSetupSocket = socket(PF_INET, SOCK_DGRAM, 0);
         if (serverSetupSocket == -1) {
@@ -271,10 +362,10 @@ InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
             close(serverSetupSocket);
             serverSetupSocket = -1;
             LOG(ERROR, "failed to bind socket for port %s: %s",
-                    sl->getOption("port").c_str(), strerror(errno));
+                    local_sl->getOption("port").c_str(), strerror(errno));
             throw TransportException(HERE, format(
                     "failed to bind socket for port %s: %s",
-                    sl->getOption("port").c_str(), strerror(errno)));
+                    local_sl->getOption("port").c_str(), strerror(errno)));
         }
 
         try {
@@ -747,8 +838,10 @@ InfRcTransport::clientTrySetupQueuePair(IpAddress& address)
     // Create a new QueuePair and send its parameters to the server so it
     // can create its qp and reply with its parameters.
     QueuePair *qp = infiniband->createQueuePair(IBV_QPT_RC,
-                                                ibPhysicalPort, clientSrq,
-                                                commonTxCq, clientRxCq,
+                                                ibPhysicalPort,
+                                                clientSrq,
+                                                commonTxCq,
+                                                clientRxCq,
                                                 MAX_TX_QUEUE_DEPTH,
                                                 MAX_SHARED_RX_QUEUE_DEPTH,
                                                 MAX_TX_SGE_COUNT);
@@ -759,7 +852,10 @@ InfRcTransport::clientTrySetupQueuePair(IpAddress& address)
     for (uint32_t i = 0; i < QP_EXCHANGE_MAX_TIMEOUTS; i++) {
         QueuePairTuple outgoingQpt(downCast<uint16_t>(lid),
                                    qp->getLocalQpNumber(),
-                                   qp->getInitialPsn(), nonce,
+                                   qp->getInitialPsn(),
+                                   nonce,
+                                   gidIndex,
+                                   gid,
                                    name);
         QueuePairTuple incomingQpt;
         bool gotResponse;
@@ -787,7 +883,7 @@ InfRcTransport::clientTrySetupQueuePair(IpAddress& address)
                 inet_ntoa(sin->sin_addr), clientPort);
 
         // plumb up our queue pair with the server's parameters.
-        qp->plumb(&incomingQpt);
+        qp->plumb(&incomingQpt, gidIndex);
         return qp;
     }
 
@@ -848,7 +944,8 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
             MAX_TX_QUEUE_DEPTH,
             MAX_SHARED_RX_QUEUE_DEPTH,
             MAX_TX_SGE_COUNT);
-    qp->plumb(&incomingQpt);
+
+    qp->plumb(&incomingQpt, transport->gidIndex);
     qp->setPeerName(incomingQpt.getPeerName());
     LOG(DEBUG, "New queue pair for %s:%u, nonce 0x%lx (total creates "
             "%d, deletes %d)",
@@ -861,7 +958,9 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
     // complete the initialisation.
     QueuePairTuple outgoingQpt(downCast<uint16_t>(transport->lid),
                                qp->getLocalQpNumber(),
-                               qp->getInitialPsn(), incomingQpt.getNonce());
+                               qp->getInitialPsn(), incomingQpt.getNonce(),
+                               transport->gidIndex,
+                               transport->gid);
     len = sendto(transport->serverSetupSocket, &outgoingQpt,
             sizeof(outgoingQpt), 0, reinterpret_cast<sockaddr *>(&sin),
             sinlen);
@@ -874,7 +973,7 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
     // store some identifying client information
     qp->handshakeSin = sin;
 
-    // Dynamically instanciates a new InfRcServerPort associating
+    // Dynamically instantiates a new InfRcServerPort associating
     // the newly created queue pair.
     // It is saved in serverPortMap with QpNumber a key.
     transport->serverPortMap[qp->getLocalQpNumber()] =
