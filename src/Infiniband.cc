@@ -639,11 +639,16 @@ Infiniband::QueuePair::plumb(QueuePairTuple *qpt)
     qpa.rq_psn = qpt->getPsn();
     qpa.max_dest_rd_atomic = 1;
     qpa.min_rnr_timer = 12;
-    qpa.ah_attr.is_global = 0;
+    qpa.ah_attr.is_global = 1;
     qpa.ah_attr.dlid = qpt->getLid();
     qpa.ah_attr.sl = 0;
     qpa.ah_attr.src_path_bits = 0;
     qpa.ah_attr.port_num = downCast<uint8_t>(ibPhysicalPort);
+    qpa.ah_attr.grh.hop_limit = 0xff;
+    if(ibv_query_gid(ctxt, qpa.ah_attr.port_num, 1, &qpa.ah_attr.grh.dgid)) {
+        LOG(ERROR, "Failed to query gid table");
+        throw TransportException(HERE, r);
+    }
 
     r = ibv_modify_qp(qp, &qpa, IBV_QP_STATE |
                                 IBV_QP_AV |
