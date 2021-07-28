@@ -639,11 +639,14 @@ Infiniband::QueuePair::plumb(QueuePairTuple *qpt)
     qpa.rq_psn = qpt->getPsn();
     qpa.max_dest_rd_atomic = 1;
     qpa.min_rnr_timer = 12;
-    qpa.ah_attr.is_global = 0;
+    qpa.ah_attr.is_global = 1;
+    qpa.ah_attr.grh.sgid_index = 3;
     qpa.ah_attr.dlid = qpt->getLid();
     qpa.ah_attr.sl = 0;
     qpa.ah_attr.src_path_bits = 0;
     qpa.ah_attr.port_num = downCast<uint8_t>(ibPhysicalPort);
+    qpa.ah_attr.grh.hop_limit = 64; // TODO: make hop limit configurable
+    qpa.ah_attr.grh.dgid = qpt->getGid();
 
     r = ibv_modify_qp(qp, &qpa, IBV_QP_STATE |
                                 IBV_QP_AV |
@@ -1005,7 +1008,7 @@ Infiniband::Address::getHandle() const
         .sl = 0,
         .src_path_bits = 0,
         .static_rate = 0,
-        .is_global = 0,
+        .is_global = 1,
         .port_num = downCast<uint8_t>(physicalPort)
     };
     infiniband.totalAddressHandleAllocCalls += 1;
