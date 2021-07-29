@@ -52,12 +52,11 @@ class Infiniband {
       public:
         QueuePairTuple() : qpn(0), psn(0), lid(0), nonce(0)
         {
-            static_assert(sizeof(QueuePairTuple) == 68,
-                              "QueuePairTuple has unexpected size");
+            memset(&gid, 0, sizeof(gid));
         }
         QueuePairTuple(uint16_t lid, uint32_t qpn, uint32_t psn,
-                       uint64_t nonce, const char* peerName = "?unknown?")
-            : qpn(qpn), psn(psn), lid(lid), nonce(nonce)
+                       uint64_t nonce, ibv_gid gid, const char* peerName = "?unknown?")
+            : qpn(qpn), psn(psn), lid(lid), nonce(nonce), gid(gid)
         {
             snprintf(this->peerName, sizeof(this->peerName), "%s",
                 peerName);
@@ -67,6 +66,7 @@ class Infiniband {
         uint32_t    getPsn() const      { return psn; }
         uint64_t    getNonce() const    { return nonce; }
         const char* getPeerName() const { return peerName; }
+        ibv_gid     getGid() const      { return gid; }
 
       private:
         uint32_t qpn;            // queue pair number
@@ -76,7 +76,10 @@ class Infiniband {
                                  // for received requests
         char peerName[50];       // Optional name for the sender (intended for
                                  // use in error messages); null-terminated.
+        ibv_gid gid;             // gid
     } __attribute__((packed));
+    // TODO: it seems that this is marked ((packed)) in the name of skipping
+    // proper serialization.  Look into a better way of dealing with this.
 
     explicit Infiniband(const char* deviceName);
     ~Infiniband();

@@ -757,9 +757,19 @@ InfRcTransport::clientTrySetupQueuePair(IpAddress& address)
             inet_ntoa(sin->sin_addr), clientPort, nonce);
 
     for (uint32_t i = 0; i < QP_EXCHANGE_MAX_TIMEOUTS; i++) {
+        ibv_gid gid;
+        memset(&gid, 0, sizeof(gid));
+        // TODO: make gid index configurable!  This will not work in the general case.
+        const int gidIndex = 1;
+        if(ibv_query_gid(infiniband->device.ctxt, ibPhysicalPort, gidIndex, &gid)) {
+            LOG(ERROR, "Failed to lookup gid index %i for physical port %i!", gidIndex, ibPhysicalPort);
+            throw TransportException(HERE, "Failed to lookup gid!");
+        }
         QueuePairTuple outgoingQpt(downCast<uint16_t>(lid),
                                    qp->getLocalQpNumber(),
-                                   qp->getInitialPsn(), nonce,
+                                   qp->getInitialPsn(),
+                                   nonce,
+                                   gid,
                                    name);
         QueuePairTuple incomingQpt;
         bool gotResponse;
@@ -848,6 +858,15 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
             MAX_TX_QUEUE_DEPTH,
             MAX_SHARED_RX_QUEUE_DEPTH,
             MAX_TX_SGE_COUNT);
+    // TODO: make gid index configurable
+    int gidIndex = 1;
+    ibv_gid gid;
+    memset(&gid, 0, sizeof(gid));
+    if(ibv_query_gid(transport->infiniband->device.ctxt, transport->ibPhysicalPort, gidIndex, &gid)) {
+        LOG(ERROR, "Failed to lookup gid index %i for physical port %i!", gidIndex, transport->ibPhysicalPort);
+        delete qp;
+        return;
+    }
     qp->plumb(&incomingQpt);
     qp->setPeerName(incomingQpt.getPeerName());
     LOG(DEBUG, "New queue pair for %s:%u, nonce 0x%lx (total creates "
@@ -861,7 +880,7 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
     // complete the initialisation.
     QueuePairTuple outgoingQpt(downCast<uint16_t>(transport->lid),
                                qp->getLocalQpNumber(),
-                               qp->getInitialPsn(), incomingQpt.getNonce());
+                               qp->getInitialPsn(), incomingQpt.getNonce(), gid);
     len = sendto(transport->serverSetupSocket, &outgoingQpt,
             sizeof(outgoingQpt), 0, reinterpret_cast<sockaddr *>(&sin),
             sinlen);
@@ -874,7 +893,7 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
     // store some identifying client information
     qp->handshakeSin = sin;
 
-    // Dynamically instanciates a new InfRcServerPort associating
+    // Dynamically instantiates a new InfRcServerPort associating
     // the newly created queue pair.
     // It is saved in serverPortMap with QpNumber a key.
     transport->serverPortMap[qp->getLocalQpNumber()] =
