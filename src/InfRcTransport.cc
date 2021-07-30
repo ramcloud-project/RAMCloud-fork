@@ -760,7 +760,7 @@ InfRcTransport::clientTrySetupQueuePair(IpAddress& address)
         ibv_gid gid;
         memset(&gid, 0, sizeof(gid));
         // TODO: make gid index configurable!  This will not work in the general case.
-        const int gidIndex = 1;
+        const int gidIndex = 3;
         if(ibv_query_gid(infiniband->device.ctxt, ibPhysicalPort, gidIndex, &gid)) {
             LOG(ERROR, "Failed to lookup gid index %i for physical port %i!", gidIndex, ibPhysicalPort);
             throw TransportException(HERE, "Failed to lookup gid!");
@@ -859,7 +859,7 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
             MAX_SHARED_RX_QUEUE_DEPTH,
             MAX_TX_SGE_COUNT);
     // TODO: make gid index configurable
-    int gidIndex = 1;
+    int gidIndex = 3;
     ibv_gid gid;
     memset(&gid, 0, sizeof(gid));
     if(ibv_query_gid(transport->infiniband->device.ctxt, transport->ibPhysicalPort, gidIndex, &gid)) {
