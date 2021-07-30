@@ -207,6 +207,10 @@ InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
         try {
             ibPhysicalPort = sl->getOption<int>("devport");
         } catch (ServiceLocator::NoSuchKeyException& e) {}
+    } else {
+        // HACK! This is just to fix the broken test client!  Don't merge this nonsense!
+        ibDeviceName   = "rocep3s0f0v0";
+        ibPhysicalPort = 1;
     }
 
     infiniband = realInfiniband.construct(ibDeviceName);
@@ -747,8 +751,10 @@ InfRcTransport::clientTrySetupQueuePair(IpAddress& address)
     // Create a new QueuePair and send its parameters to the server so it
     // can create its qp and reply with its parameters.
     QueuePair *qp = infiniband->createQueuePair(IBV_QPT_RC,
-                                                ibPhysicalPort, clientSrq,
-                                                commonTxCq, clientRxCq,
+                                                ibPhysicalPort,
+                                                clientSrq,
+                                                commonTxCq,
+                                                clientRxCq,
                                                 MAX_TX_QUEUE_DEPTH,
                                                 MAX_SHARED_RX_QUEUE_DEPTH,
                                                 MAX_TX_SGE_COUNT);
