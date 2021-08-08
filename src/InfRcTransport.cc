@@ -209,7 +209,7 @@ InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
         } catch (ServiceLocator::NoSuchKeyException& e) {}
     } else {
         // HACK! This is just to fix the broken test client!  Don't merge this nonsense!
-        ibDeviceName   = "rocep3s0f0v0";
+        ibDeviceName   = "mlx5_5";
         ibPhysicalPort = 1;
     }
 
