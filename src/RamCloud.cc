@@ -37,10 +37,6 @@
 
 namespace RAMCloud {
 
-// Default RejectRules to use if none are provided by the caller: rejects
-// nothing.
-static RejectRules defaultRejectRules;
-
 /**
  * Construct a RamCloud for a particular cluster.
  *

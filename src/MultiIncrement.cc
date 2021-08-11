@@ -19,10 +19,6 @@
 
 namespace RAMCloud {
 
-// Default RejectRules to use if none are provided by the caller: rejects
-// nothing.
-static RejectRules defaultRejectRules;
-
 /**
  * Constructor for MultiIncrement objects: initiates one or more RPCs for a
  * multiIncrement operation, but returns once the RPCs have been initiated,
@@ -69,8 +65,7 @@ MultiIncrement::appendRequest(MultiOpObject* request, Buffer* buf)
             req->keyLength,
             req->incrementInt64,
             req->incrementDouble,
-            req->rejectRules ? *req->rejectRules :
-                               defaultRejectRules);
+            req->rejectRules);
 
     buf->appendCopy(req->key, req->keyLength);
 }
