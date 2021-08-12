@@ -59,6 +59,17 @@ struct KeyInfo
 };
 
 /**
+ * Default RejectRules to use if none are provided by the caller: rejects
+ * nothing.
+ *
+ * TODO: version is set to 1 here, which doesn't impact the "reject-nothing"
+ * behavior due to all other reject-modifiers being off (aka zero), but it
+ * will be interesting to look into why using a version value of zero with
+ * all other reject modifiers are off upsets ObjectManager.cc
+ */
+static const RejectRules defaultRejectRules = {1, 0, 0, 0, 0};
+
+/**
  * The RamCloud class provides the primary interface used by applications to
  * access a RAMCloud cluster.
  *
@@ -590,6 +601,7 @@ class MigrateTabletRpc : public ObjectRpcWrapper {
  * MultixxxxxObject that extends this object to describe its own parameters.
  */
 struct MultiOpObject {
+
     /**
      * The table containing the desired object (return value from
      * a previous call to getTableId).
@@ -610,23 +622,31 @@ struct MultiOpObject {
     uint16_t keyLength;
 
     /**
+     * The RejectRules specify when conditional operations should be aborted.
+     */
+    RejectRules rejectRules;
+
+    /**
      * The status of read (either that the read succeeded, or the
      * error in case it didn't) is returned here.
      */
     Status status;
 
     PROTECTED:
-    MultiOpObject(uint64_t tableId, const void* key, uint16_t keyLength)
+    MultiOpObject(uint64_t tableId, const void* key, uint16_t keyLength, const RejectRules* rr)
         : tableId(tableId)
         , key(key)
         , keyLength(keyLength)
         , status()
-    {}
+    {
+      rejectRules = (rr ? *rr : defaultRejectRules);
+    }
 
     MultiOpObject()
         : tableId()
         , key()
         , keyLength()
+        , rejectRules(defaultRejectRules)
         , status()
     {}
 
@@ -634,6 +654,7 @@ struct MultiOpObject {
         : tableId(other.tableId)
         , key(other.key)
         , keyLength(other.keyLength)
+        , rejectRules(other.rejectRules)
         , status(other.status)
     {};
 
@@ -641,6 +662,7 @@ struct MultiOpObject {
         tableId = other.tableId;
         key = other.key;
         keyLength = other.keyLength;
+        rejectRules = other.rejectRules;
         status = other.status;
         return *this;
     }
@@ -663,11 +685,6 @@ struct MultiIncrementObject : public MultiOpObject {
     double incrementDouble;
 
     /**
-     * The RejectRules specify when conditional increments should be aborted.
-     */
-    const RejectRules* rejectRules;
-
-    /**
      * The version number of the newly written object is returned here.
      */
     uint64_t version;
@@ -682,11 +699,10 @@ struct MultiIncrementObject : public MultiOpObject {
 
     MultiIncrementObject(uint64_t tableId, const void* key, uint16_t keyLength,
                 int64_t incrementInt64, double incrementDouble,
-                const RejectRules* rejectRules = NULL)
-        : MultiOpObject(tableId, key, keyLength)
+                const RejectRules* rr = NULL)
+        : MultiOpObject(tableId, key, keyLength, rr)
         , incrementInt64(incrementInt64)
         , incrementDouble(incrementDouble)
-        , rejectRules(rejectRules)
         , version()
         , newValue()
     {}
@@ -695,7 +711,6 @@ struct MultiIncrementObject : public MultiOpObject {
         : MultiOpObject()
         , incrementInt64()
         , incrementDouble()
-        , rejectRules()
         , version()
         , newValue()
     {}
@@ -704,7 +719,6 @@ struct MultiIncrementObject : public MultiOpObject {
         : MultiOpObject(other)
         , incrementInt64(other.incrementInt64)
         , incrementDouble(other.incrementDouble)
-        , rejectRules(other.rejectRules)
         , version(other.version)
         , newValue(other.newValue)
     {}
@@ -713,7 +727,6 @@ struct MultiIncrementObject : public MultiOpObject {
         MultiOpObject::operator =(other);
         incrementInt64 = other.incrementInt64;
         incrementDouble = other.incrementDouble;
-        rejectRules = other.rejectRules;
         version = other.version;
         newValue = other.newValue;
         return *this;
@@ -733,40 +746,32 @@ struct MultiReadObject : public MultiOpObject {
     Tub<ObjectBuffer>* value;
 
     /**
-     * The RejectRules specify when conditional reads should be aborted.
-     */
-    const RejectRules* rejectRules;
-
-    /**
      * The version number of the object is returned here.
      */
     uint64_t version;
 
     MultiReadObject(uint64_t tableId, const void* key, uint16_t keyLength,
-            Tub<ObjectBuffer>* value, const RejectRules* rejectRules = NULL)
-        : MultiOpObject(tableId, key, keyLength)
+            Tub<ObjectBuffer>* value, const RejectRules* rr = NULL)
+        : MultiOpObject(tableId, key, keyLength, rr)
         , value(value)
-        , rejectRules(rejectRules)
         , version()
     {}
 
     MultiReadObject()
-        : value()
-        , rejectRules()
+        : MultiOpObject()
+        , value()
         , version()
     {}
 
     MultiReadObject(const MultiReadObject& other)
         : MultiOpObject(other)
         , value(other.value)
-        , rejectRules(other.rejectRules)
         , version(other.version)
     {}
 
     MultiReadObject& operator=(const MultiReadObject& other) {
         MultiOpObject::operator =(other);
         value = other.value;
-        rejectRules = other.rejectRules;
         version = other.version;
         return *this;
     }
@@ -778,36 +783,28 @@ struct MultiReadObject : public MultiOpObject {
 struct MultiRemoveObject : public MultiOpObject {
 
     /**
-     * The RejectRules specify when conditional removes should be aborted.
-     */
-    const RejectRules* rejectRules;
-
-    /**
      * The version number of the object just before removal is returned here.
      */
     uint64_t version;
 
     MultiRemoveObject(uint64_t tableId, const void* key, uint16_t keyLength,
-                      const RejectRules* rejectRules = NULL)
-        : MultiOpObject(tableId, key, keyLength)
-        , rejectRules(rejectRules)
+                      const RejectRules* rr = NULL)
+        : MultiOpObject(tableId, key, keyLength, rr)
         , version()
     {}
 
     MultiRemoveObject()
-        : rejectRules()
+        : MultiOpObject()
         , version()
     {}
 
     MultiRemoveObject(const MultiRemoveObject& other)
         : MultiOpObject(other)
-        , rejectRules(other.rejectRules)
         , version(other.version)
     {}
 
     MultiRemoveObject& operator=(const MultiRemoveObject& other) {
         MultiOpObject::operator =(other);
-        rejectRules = other.rejectRules;
         version = other.version;
         return *this;
     }
@@ -839,10 +836,6 @@ struct MultiWriteObject : public MultiOpObject {
      * This will be NULL for single key multiwrite objects
      */
     KeyInfo *keyInfo;
-    /**
-     * The RejectRules specify when conditional writes should be aborted.
-     */
-    const RejectRules* rejectRules;
 
     /**
      * The version number of the newly written object is returned here.
@@ -873,13 +866,12 @@ struct MultiWriteObject : public MultiOpObject {
      */
     MultiWriteObject(uint64_t tableId, const void* key, uint16_t keyLength,
                  const void* value, uint32_t valueLength,
-                 const RejectRules* rejectRules = NULL)
-        : MultiOpObject(tableId, key, keyLength)
+                 const RejectRules* rr = NULL)
+        : MultiOpObject(tableId, key, keyLength, rr)
         , value(value)
         , valueLength(valueLength)
         , numKeys(1)
         , keyInfo(NULL)
-        , rejectRules(rejectRules)
         , version()
     {}
 
@@ -912,13 +904,12 @@ struct MultiWriteObject : public MultiOpObject {
     MultiWriteObject(uint64_t tableId,
                  const void* value, uint32_t valueLength,
                  uint8_t numKeys, KeyInfo *keyInfo,
-                 const RejectRules* rejectRules = NULL)
-        : MultiOpObject(tableId, NULL, 0)
+                 const RejectRules* rr = NULL)
+        : MultiOpObject(tableId, NULL, 0, rr)
         , value(value)
         , valueLength(valueLength)
         , numKeys(numKeys)
         , keyInfo(keyInfo)
-        , rejectRules(rejectRules)
         , version()
     {}
 
@@ -928,7 +919,6 @@ struct MultiWriteObject : public MultiOpObject {
         , valueLength()
         , numKeys()
         , keyInfo()
-        , rejectRules()
         , version()
     {}
 
@@ -938,7 +928,6 @@ struct MultiWriteObject : public MultiOpObject {
         , valueLength(other.valueLength)
         , numKeys(other.numKeys)
         , keyInfo(other.keyInfo)
-        , rejectRules(other.rejectRules)
         , version(other.version)
     {}
 
@@ -949,7 +938,6 @@ struct MultiWriteObject : public MultiOpObject {
         numKeys = other.numKeys;
         // shallow copy should be good enough
         keyInfo = other.keyInfo;
-        rejectRules = other.rejectRules;
         version = other.version;
         return *this;
     }
