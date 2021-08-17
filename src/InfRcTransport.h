@@ -49,6 +49,29 @@ namespace RAMCloud {
 
 /**
  * Transport mechanism that uses Infiniband reliable queue pairs.
+ *
+ * NOTE: If you choose to use this transport for RAMCloud server, RAMCloud coordinator,
+ * and any of your RAMCloud client libraries, you will need the following environment
+ * variables set:
+ *
+ * - RDMA_DEV
+ * - RDMA_DEVPORT
+ * - RDMA_GID_INDEX
+ *
+ * Depending on which Infiniband or compatible device you are using, and the
+ * GID and communication type you want, these variables can be figured out. We assume
+ * the list of GID's does not change on a device for the entire duration of RAMCloud's
+ * run. The main reason we use gid index instead of the gid itself is: (1) it is
+ * possible to have duplicate entries in the GID table for a device that correspond to
+ * different protocol types (for example: same GID entry appears twice, once for ROCEv1
+ * mode, and again for ROCEv2 modes) and the index helps to distinguish entries, (2) we
+ * can find the GID itself given the gid index, (3) gid index is required anyhow to
+ * setup the queue pairs.
+ *
+ * For the service locator of RAMCloud server and coordinator, when using infud, it is
+ * also recommended to set the dev, devport, and gid_index fields (you can set them to
+ * the same values as their corresponding environment variables).
+ *
  */
 class InfRcTransport : public Transport {
     typedef RAMCloud::Perf::ReadRequestHandle_MetricSet
@@ -351,6 +374,7 @@ class InfRcTransport : public Transport {
     int          clientSetupSocket; // UDP socket for outgoing setup requests
     int          clientPort;        // Port number associated with
                                     // clientSetupSocket
+    int          gidIndex;          // Index for GID
 
     // Map ibv_wc.qp_num/qp.LocalQpNumber to InfRcServerPort*.
     // InfRcServePort contains QueuePair* and Alarm* for the port

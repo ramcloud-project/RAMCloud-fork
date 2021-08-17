@@ -158,7 +158,7 @@ namespace {
  *      Identifier that identifies us in outgoing RPCs: must be unique across
  *      all servers and clients.
  */
-InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
+InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *my_sl,
         uint64_t clientId)
     : context(context)
     , realInfiniband()
@@ -197,20 +197,50 @@ InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
 {
     const char *ibDeviceName = NULL;
 
-    if (sl != NULL) {
-        locatorString = sl->getOriginalString();
+    if (my_sl != NULL) {
+        // This is ran by rc-server and rc-coordinator intializing a Transport on itself
+        locatorString = my_sl->getOriginalString();
 
         try {
-            ibDeviceName   = sl->getOption<const char *>("dev");
+            ibDeviceName   = my_sl->getOption<const char *>("dev"); //"mlx5_5";
         } catch (ServiceLocator::NoSuchKeyException& e) {}
 
         try {
-            ibPhysicalPort = sl->getOption<int>("devport");
+            ibPhysicalPort = my_sl->getOption<int>("devport"); //1;
         } catch (ServiceLocator::NoSuchKeyException& e) {}
+
+        try {
+            gidIndex = my_sl->getOption<int>("gid_index"); //3;
+        } catch (ServiceLocator::NoSuchKeyException& e) {}
+
     } else {
-        // HACK! This is just to fix the broken test client!  Don't merge this nonsense!
-        ibDeviceName   = "mlx5_5";
-        ibPhysicalPort = 1;
+        // Ran by rc-client, rc-server, rc-coordinator intializing a Transport to someone else
+        ibDeviceName = getenv("RDMA_DEV");
+        if (!ibDeviceName || strlen(ibDeviceName) == 0) {
+            LOG(ERROR, "Could not find env variable RDMA_DEV");
+            throw TransportException(HERE,
+                "Could not find env variable RDMA_DEV",
+                errno);
+        }
+        const char* env = NULL;
+
+        env = getenv("RDMA_DEVPORT");
+        if (!env || strlen(env) == 0) {
+            LOG(ERROR, "Could not find env variable RDMA_DEVPORT");
+            throw TransportException(HERE,
+                "Could not find env variable RDMA_DEVPORT",
+                errno);
+        }
+        ibPhysicalPort = atoi(env);
+
+        env = getenv("RDMA_GID_INDEX");
+        if (!env || strlen(env) == 0) {
+            LOG(ERROR, "Could not find env variable RDMA_GID_INDEX");
+            throw TransportException(HERE,
+                "Could not find env variable RDMA_GID_INDEX",
+                errno);
+        }
+        gidIndex = atoi(env);
     }
 
     infiniband = realInfiniband.construct(ibDeviceName);
@@ -260,8 +290,8 @@ InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
     clientPort = NTOHS(socketAddress.sin_port);
 
     // If this is a server, create a server setup socket and bind it.
-    if (sl != NULL) {
-        IpAddress address(sl);
+    if (my_sl != NULL) {
+        IpAddress address(my_sl);
 
         serverSetupSocket = socket(PF_INET, SOCK_DGRAM, 0);
         if (serverSetupSocket == -1) {
@@ -275,10 +305,10 @@ InfRcTransport::InfRcTransport(Context* context, const ServiceLocator *sl,
             close(serverSetupSocket);
             serverSetupSocket = -1;
             LOG(ERROR, "failed to bind socket for port %s: %s",
-                    sl->getOption("port").c_str(), strerror(errno));
+                    my_sl->getOption("port").c_str(), strerror(errno));
             throw TransportException(HERE, format(
                     "failed to bind socket for port %s: %s",
-                    sl->getOption("port").c_str(), strerror(errno)));
+                    my_sl->getOption("port").c_str(), strerror(errno)));
         }
 
         try {
@@ -762,20 +792,20 @@ InfRcTransport::clientTrySetupQueuePair(IpAddress& address)
     LOG(DEBUG, "starting to connect to %s via local port %d, nonce 0x%lx",
             inet_ntoa(sin->sin_addr), clientPort, nonce);
 
+    ibv_gid gid;
+    memset(&gid, 0, sizeof(gid));
+    if(ibv_query_gid(infiniband->device.ctxt, ibPhysicalPort, gidIndex, &gid)) {
+        LOG(ERROR, "Failed to lookup gid index %i for physical port %i!", gidIndex, ibPhysicalPort);
+        throw TransportException(HERE, "Failed to lookup gid!");
+    }
+
     for (uint32_t i = 0; i < QP_EXCHANGE_MAX_TIMEOUTS; i++) {
-        ibv_gid gid;
-        memset(&gid, 0, sizeof(gid));
-        // TODO: make gid index configurable!  This will not work in the general case.
-        const int gidIndex = 3;
-        if(ibv_query_gid(infiniband->device.ctxt, ibPhysicalPort, gidIndex, &gid)) {
-            LOG(ERROR, "Failed to lookup gid index %i for physical port %i!", gidIndex, ibPhysicalPort);
-            throw TransportException(HERE, "Failed to lookup gid!");
-        }
         QueuePairTuple outgoingQpt(downCast<uint16_t>(lid),
                                    qp->getLocalQpNumber(),
                                    qp->getInitialPsn(),
                                    nonce,
                                    gid,
+                                   downCast<uint8_t>(gidIndex),
                                    name);
         QueuePairTuple incomingQpt;
         bool gotResponse;
@@ -864,12 +894,10 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
             MAX_TX_QUEUE_DEPTH,
             MAX_SHARED_RX_QUEUE_DEPTH,
             MAX_TX_SGE_COUNT);
-    // TODO: make gid index configurable
-    int gidIndex = 3;
     ibv_gid gid;
     memset(&gid, 0, sizeof(gid));
-    if(ibv_query_gid(transport->infiniband->device.ctxt, transport->ibPhysicalPort, gidIndex, &gid)) {
-        LOG(ERROR, "Failed to lookup gid index %i for physical port %i!", gidIndex, transport->ibPhysicalPort);
+    if(ibv_query_gid(transport->infiniband->device.ctxt, transport->ibPhysicalPort, transport->gidIndex, &gid)) {
+        LOG(ERROR, "Failed to lookup gid index %i for physical port %i!", transport->gidIndex, transport->ibPhysicalPort);
         delete qp;
         return;
     }
@@ -886,7 +914,8 @@ InfRcTransport::ServerConnectHandler::handleFileEvent(int events)
     // complete the initialisation.
     QueuePairTuple outgoingQpt(downCast<uint16_t>(transport->lid),
                                qp->getLocalQpNumber(),
-                               qp->getInitialPsn(), incomingQpt.getNonce(), gid);
+                               qp->getInitialPsn(), incomingQpt.getNonce(), gid,
+                               downCast<uint8_t>(transport->gidIndex));
     len = sendto(transport->serverSetupSocket, &outgoingQpt,
             sizeof(outgoingQpt), 0, reinterpret_cast<sockaddr *>(&sin),
             sinlen);

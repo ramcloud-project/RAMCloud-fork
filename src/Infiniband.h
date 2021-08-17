@@ -50,13 +50,14 @@ class Infiniband {
     // back and forth.
     class QueuePairTuple {
       public:
-        QueuePairTuple() : qpn(0), psn(0), lid(0), nonce(0)
+        QueuePairTuple() : qpn(0), psn(0), lid(0), nonce(0), gidIndex(0)
         {
             memset(&gid, 0, sizeof(gid));
         }
         QueuePairTuple(uint16_t lid, uint32_t qpn, uint32_t psn,
-                       uint64_t nonce, ibv_gid gid, const char* peerName = "?unknown?")
-            : qpn(qpn), psn(psn), lid(lid), nonce(nonce), gid(gid)
+                       uint64_t nonce, ibv_gid gid, uint8_t gidIndex,
+                       const char* peerName = "?unknown?")
+            : qpn(qpn), psn(psn), lid(lid), nonce(nonce), gid(gid), gidIndex(gidIndex)
         {
             snprintf(this->peerName, sizeof(this->peerName), "%s",
                 peerName);
@@ -67,6 +68,7 @@ class Infiniband {
         uint64_t    getNonce() const    { return nonce; }
         const char* getPeerName() const { return peerName; }
         ibv_gid     getGid() const      { return gid; }
+        uint8_t     getGidIndex() const { return gidIndex; }
 
       private:
         uint32_t qpn;            // queue pair number
@@ -77,6 +79,7 @@ class Infiniband {
         char peerName[50];       // Optional name for the sender (intended for
                                  // use in error messages); null-terminated.
         ibv_gid gid;             // gid
+        uint8_t gidIndex;        // index for gid
     } __attribute__((packed));
     // TODO: it seems that this is marked ((packed)) in the name of skipping
     // proper serialization.  Look into a better way of dealing with this.
