@@ -358,8 +358,6 @@ include src/MakefragCoordinator
 include src/MakefragTest
 include apps/MakefragApp
 include nanobenchmarks/MakefragNano
-include src/misc/Makefrag
-include bindings/python/Makefrag
 
 # The following line allows developers to create private make rules
 # in the file private/MakefragPrivate.  The recommended approach is

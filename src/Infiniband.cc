@@ -612,13 +612,16 @@ Infiniband::QueuePair::~QueuePair()
  *      manually. This includes initial sequence numbers, queue pair
  *      numbers, and the HCA infiniband addresses.
  *
+ * \param localGidIndex
+ *      gid index of the local device we are pairing to the remote one
+ *
  * \throw TransportException
  *      An exception is thrown if this method is called on a QueuePair
  *      that is not of type IBV_QPT_RC, or if the QueuePair is not
  *      in the INIT state.
  */
 void
-Infiniband::QueuePair::plumb(QueuePairTuple *qpt)
+Infiniband::QueuePair::plumb(QueuePairTuple *qpt, uint8_t localGidIndex)
 {
     ibv_qp_attr qpa;
     int r;
@@ -639,11 +642,16 @@ Infiniband::QueuePair::plumb(QueuePairTuple *qpt)
     qpa.rq_psn = qpt->getPsn();
     qpa.max_dest_rd_atomic = 1;
     qpa.min_rnr_timer = 12;
-    qpa.ah_attr.is_global = 0;
+    // NOTE: QueuePairTuple is only used by InfRcTransport. If a different transport
+    // or driver uses QueuePairTuple, we might need a toggle for is_global
+    qpa.ah_attr.is_global = 1;
+    qpa.ah_attr.grh.sgid_index = localGidIndex;
     qpa.ah_attr.dlid = qpt->getLid();
     qpa.ah_attr.sl = 0;
     qpa.ah_attr.src_path_bits = 0;
     qpa.ah_attr.port_num = downCast<uint8_t>(ibPhysicalPort);
+    qpa.ah_attr.grh.hop_limit = 64; // TODO: make hop limit configurable
+    qpa.ah_attr.grh.dgid = qpt->getGid();
 
     r = ibv_modify_qp(qp, &qpa, IBV_QP_STATE |
                                 IBV_QP_AV |
@@ -999,6 +1007,10 @@ Infiniband::Address::getHandle() const
 
     // Must allocate a new address handle. See also:
     // https://www.rdmamojo.com/2012/09/22/ibv_create_ah/
+    //
+    // NOTE: Infiniband::Address is only used by InfUdDriver. If a different transport
+    // or driver uses this class, then we might need a toggle for is_global
+
     ibv_ah_attr attr = {
         .grh = {},
         .dlid = lid,
