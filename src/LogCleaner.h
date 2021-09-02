@@ -111,17 +111,6 @@ class LogCleaner {
     /// seglets at the ends of survivor segments.
     enum { SURVIVOR_SEGMENTS_TO_RESERVE = 15 };
 
-    /// The minimum amount of memory utilization we will begin cleaning at using
-    /// the in-memory cleaner.
-    enum { MIN_MEMORY_UTILIZATION = 90 };
-
-    /// The minimum amount of backup disk utilization we will begin cleaning at
-    /// using the disk cleaner. Note that the disk cleaner may also run if the
-    /// in-memory cleaner is not working efficiently enough to keep up with the
-    /// log writes (accumulation of tombstones will eventually create such
-    /// inefficiency and requires disk cleaning to free them).
-    enum { MIN_DISK_UTILIZATION = 95 };
-
     /**
      * Tuple containing a reference to an entry being cleaned, as well as a
      * cache of its timestamp. The purpose of this is to make sorting entries
@@ -179,10 +168,11 @@ class LogCleaner {
       public:
         enum CleaningTask { COMPACT_MEMORY, CLEAN_DISK, SLEEP };
 
-        explicit Balancer(LogCleaner* cleaner)
+        explicit Balancer(LogCleaner* cleaner, double compactionRatio)
             : cleaner(cleaner)
             , compactionFailures(0)
             , compactionFailuresHandled(0)
+            , compactionRatio(compactionRatio)
         {
         }
         virtual ~Balancer() { }
@@ -195,23 +185,25 @@ class LogCleaner {
         LogCleaner* cleaner;
         std::atomic<uint64_t> compactionFailures;
         std::atomic<uint64_t> compactionFailuresHandled;
+        double compactionRatio;
 
         DISALLOW_COPY_AND_ASSIGN(Balancer);
     };
 
     class TombstoneRatioBalancer : public Balancer {
       public:
-        TombstoneRatioBalancer(LogCleaner* cleaner, double ratio);
+        TombstoneRatioBalancer(LogCleaner* cleaner, double ratio, double compactionRatio);
         ~TombstoneRatioBalancer();
 
       PRIVATE:
         bool isDiskCleaningNeeded(CleanerThreadState* thread);
+
         double ratio;
     };
 
     class FixedBalancer: public Balancer {
       public:
-        FixedBalancer(LogCleaner* cleaner, uint32_t cleaningPercentage);
+        FixedBalancer(LogCleaner* cleaner, uint32_t cleaningPercentage, double compactionRatio);
         ~FixedBalancer();
 
       PRIVATE:
@@ -376,6 +368,21 @@ class LogCleaner {
     /// Size of each full segment in bytes. Used to calculate the amount of
     /// space freed on backup disks.
     uint32_t segmentSize;
+
+    /// The minimum amount of memory utilization we will begin cleaning at using
+    /// the in-memory cleaner.
+    uint32_t minMemoryUtilization;
+
+    /// The minimum amount of backup disk utilization we will begin cleaning at
+    /// using the disk cleaner. Note that the disk cleaner may also run if the
+    /// in-memory cleaner is not working efficiently enough to keep up with the
+    /// log writes (accumulation of tombstones will eventually create such
+    /// inefficiency and requires disk cleaning to free them).
+    uint32_t minDiskUtilization;
+
+    /// The minimum amount of memory or backup utilization to indicate that we
+    /// are in danger of running out of memory & failing.
+    uint32_t dangerThreshold;
 
     /// Total number of threads actively working (not just sleeping);
     /// used to implement Disablers.

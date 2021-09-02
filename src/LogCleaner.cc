@@ -63,6 +63,9 @@ LogCleaner::LogCleaner(Context* context,
       numThreads(config->master.cleanerThreadCount),
       segletSize(config->segletSize),
       segmentSize(config->segmentSize),
+      minMemoryUtilization(config->master.minMemoryUtilization),
+      minDiskUtilization(config->backup.minDiskUtilization),
+      dangerThreshold(config->dangerThreshold),
       activeThreads(0),
       disableCount(0),
       cleanerIdle(),
@@ -94,12 +97,13 @@ LogCleaner::LogCleaner(Context* context,
     }
 
     string balancerArg = config->master.cleanerBalancer;
+    double compactionRatio = config->master.compactionRatio;
     if (balancerArg.compare(0, 6, "fixed:") == 0) {
         string fixedPercentage = balancerArg.substr(6);
-        balancer = new FixedBalancer(this, atoi(fixedPercentage.c_str()));
+        balancer = new FixedBalancer(this, atoi(fixedPercentage.c_str()), compactionRatio);
     } else if (balancerArg.compare(0, 15, "tombstoneRatio:") == 0) {
         string ratio = balancerArg.substr(15);
-        balancer = new TombstoneRatioBalancer(this, atof(ratio.c_str()));
+        balancer = new TombstoneRatioBalancer(this, atof(ratio.c_str()), compactionRatio);
     } else {
         DIE("Unknown balancer specified: \"%s\"", balancerArg.c_str());
     }
@@ -173,8 +177,13 @@ LogCleaner::getMetrics(ProtoBuf::LogMetrics_CleanerMetrics& m)
     m.set_max_cleanable_memory_utilization(MAX_CLEANABLE_MEMORY_UTILIZATION);
     m.set_live_segments_per_disk_pass(MAX_LIVE_SEGMENTS_PER_DISK_PASS);
     m.set_survivor_segments_to_reserve(SURVIVOR_SEGMENTS_TO_RESERVE);
-    m.set_min_memory_utilization(MIN_MEMORY_UTILIZATION);
-    m.set_min_disk_utilization(MIN_DISK_UTILIZATION);
+
+    // NOTE: minMemoryUtilization and minDiskUtilization are immutable from the
+    // time of the constructor call to LogCleaner, otherwise, they'd need to be
+    // atomic types to prevent thread-conflicts in populating the m protobuf
+    m.set_min_memory_utilization(minMemoryUtilization);
+    m.set_min_disk_utilization(minDiskUtilization);
+
     m.set_do_work_ticks(doWorkTicks);
     m.set_do_work_sleep_ticks(doWorkSleepTicks);
     inMemoryMetrics.serialize(*m.mutable_in_memory_metrics());
@@ -486,7 +495,7 @@ LogCleaner::doDiskCleaning()
     localMetrics.totalSegmentsCleaned += segmentsToClean.size();
     localMetrics.totalSurvivorsCreated += survivors.size();
     localMetrics.totalRuns++;
-    if (segmentManager.getSegmentUtilization() >= MIN_DISK_UTILIZATION)
+    if (segmentManager.getSegmentUtilization() >= minDiskUtilization)
         localMetrics.totalLowDiskSpaceRuns++;
     onDiskMetrics.lastRunTimestamp = WallTime::secondsTimestamp();
     onDiskMetrics.merge(localMetrics);
@@ -759,18 +768,18 @@ LogCleaner::Balancer::isMemoryLow(CleanerThreadState* thread)
     const int T = cleaner->segmentManager.getMemoryUtilization();
     const int L = cleaner->cleanableSegments.getLiveObjectUtilization();
 
+    // TODO: When we exceed dangerThreshold, we should probably
+    // do something, but for now, we warn the user
+    if (T >= cleaner->dangerThreshold) {
+        LOG(WARNING, "Memory Utilization (%d) exceeds Danger Threshold", T);
+    }
+
     // We need to clean if memory is low and there's space that could be
     // reclaimed. It's not worth cleaning if almost everything is alive.
-    int baseThreshold = std::max(90, (100 + L) / 2);
+    int baseThreshold = std::min(cleaner->minMemoryUtilization,
+                                 static_cast<uint32_t>(compactionRatio * (100 - L)));
     if (T < baseThreshold)
         return false;
-
-    // Employ multiple threads only when we fail to keep up with fewer of them.
-    if (thread->threadNumber > 0) {
-        int thresh = baseThreshold + 2 * static_cast<int>(thread->threadNumber);
-        if (T < std::min(99, thresh))
-            return false;
-    }
 
     return true;
 }
@@ -799,8 +808,9 @@ LogCleaner::Balancer::requestTask(CleanerThreadState* thread)
 }
 
 LogCleaner::TombstoneRatioBalancer::TombstoneRatioBalancer(LogCleaner* cleaner,
-                                                           double ratio)
-    : Balancer(cleaner)
+                                                           double ratio,
+                                                           double compactionRatio)
+    : Balancer(cleaner, compactionRatio)
     , ratio(ratio)
 {
     LOG(NOTICE, "Using tombstone ratio balancer with ratio = %f", ratio);
@@ -823,13 +833,8 @@ LogCleaner::TombstoneRatioBalancer::isDiskCleaningNeeded(
         return false;
 
     // If we're running out of disk space, we need to run the disk cleaner.
-    if (cleaner->segmentManager.getSegmentUtilization() >= MIN_DISK_UTILIZATION)
+    if (cleaner->segmentManager.getSegmentUtilization() >= cleaner->minDiskUtilization)
         return true;
-
-    // If we're not low on memory then we need not clean. Note that this is
-    // purposefully checked after first seeing if we're low on disk space.
-    if (!isMemoryLow(thread))
-        return false;
 
     // If we are low on memory, but the compactor is disabled, we must clean.
     if (cleaner->disableInMemoryCleaning)
@@ -853,8 +858,16 @@ LogCleaner::TombstoneRatioBalancer::isDiskCleaningNeeded(
     // the space not used by live objects (that is, space that is eventually
     // reclaimable), then we should run the disk cleaner to hopefully make some
     // of them dead.
+
     const int U = cleaner->cleanableSegments.getUndeadTombstoneUtilization();
     const int L = cleaner->cleanableSegments.getLiveObjectUtilization();
+
+    // TODO: When we exceed dangerThreshold, we should probably
+    // do something, but for now, we warn the user
+    if (U >= cleaner->dangerThreshold) {
+        LOG(WARNING, "Undead Tombstone Utilization (%d) exceeds Danger Threshold", U);
+    }
+
     if (U >= static_cast<int>(ratio * (100 - L)))
         return true;
 
@@ -862,8 +875,9 @@ LogCleaner::TombstoneRatioBalancer::isDiskCleaningNeeded(
 }
 
 LogCleaner::FixedBalancer::FixedBalancer(LogCleaner* cleaner,
-                                         uint32_t cleaningPercentage)
-    : Balancer(cleaner)
+                                         uint32_t cleaningPercentage,
+                                         double compactionRatio)
+    : Balancer(cleaner, compactionRatio)
     , cleaningPercentage(cleaningPercentage)
 {
     if (cleaner->disableInMemoryCleaning && cleaningPercentage < 100) {
@@ -886,11 +900,8 @@ LogCleaner::FixedBalancer::isDiskCleaningNeeded(CleanerThreadState* thread)
     if (thread->threadNumber != 0)
         return false;
 
-    if (cleaner->segmentManager.getSegmentUtilization() >= MIN_DISK_UTILIZATION)
+    if (cleaner->segmentManager.getSegmentUtilization() >= cleaner->minDiskUtilization)
         return true;
-
-    if (!isMemoryLow(thread))
-        return false;
 
     // If the memory compactor has failed to free any space recent, it's a good
     // sign that we need disk cleaning.

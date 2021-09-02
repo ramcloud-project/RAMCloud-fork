@@ -64,6 +64,7 @@ struct ServerConfig {
         , maxObjectDataSize(segmentSize / 4)
         , maxObjectKeySize((64 * 1024) - 1)
         , maxCores(2)
+        , dangerThreshold(98)
         , master(testing)
         , backup(testing)
     {}
@@ -88,6 +89,7 @@ struct ServerConfig {
         , maxObjectDataSize(segmentSize / 8)
         , maxObjectKeySize((64 * 1024) - 1)
         , maxCores(2)
+        , dangerThreshold(98)
         , master()
         , backup()
     {}
@@ -137,6 +139,7 @@ struct ServerConfig {
         config.set_max_object_data_size(maxObjectDataSize);
         config.set_max_object_key_size(maxObjectKeySize);
         config.set_max_cores(maxCores);
+        config.set_danger_threshold(dangerThreshold);
 
         if (services.has(WireFormat::MASTER_SERVICE))
             master.serialize(*config.mutable_master());
@@ -218,6 +221,12 @@ struct ServerConfig {
     uint32_t maxCores;
 
     /**
+     * The percentage of memory or backup utilization that is dangerous
+     * due to possibly not having enough spare RAM to perform log cleaning.
+     */
+    uint32_t dangerThreshold;
+
+    /**
      * Configuration details specific to the MasterService on a server,
      * if any.  If !config.has(MASTER_SERVICE) then this field is ignored.
      */
@@ -240,6 +249,8 @@ struct ServerConfig {
             , useMinCopysets(false)
             , usePlusOneBackup(false)
             , allowLocalBackup(false)
+            , minMemoryUtilization(90)
+            , compactionRatio(0.5)
         {}
 
         /**
@@ -261,6 +272,8 @@ struct ServerConfig {
             , useMinCopysets()
             , usePlusOneBackup()
             , allowLocalBackup()
+            , minMemoryUtilization()
+            , compactionRatio()
         {}
 
         /**
@@ -282,6 +295,8 @@ struct ServerConfig {
             config.set_use_mincopysets(useMinCopysets);
             config.set_use_plusonebackup(usePlusOneBackup);
             config.set_use_local_backup(allowLocalBackup);
+            config.set_min_memory_utilization(minMemoryUtilization);
+            config.set_compaction_ratio(compactionRatio);
         }
 
         /**
@@ -304,6 +319,8 @@ struct ServerConfig {
             useMinCopysets = config.use_mincopysets();
             usePlusOneBackup = config.use_plusonebackup();
             allowLocalBackup = config.use_local_backup();
+            minMemoryUtilization = config.min_memory_utilization();
+            compactionRatio = config.compaction_ratio();
         }
 
         /// Total number bytes to use for the in-memory Log.
@@ -355,6 +372,15 @@ struct ServerConfig {
 
         /// If true, allow replication to local backup.
         bool allowLocalBackup;
+
+        /// When in-memory cleaning is enabled, then this is
+        /// The minimum percent of memory utilization we will begin cleaning at using
+        /// the in-memory cleaner.
+        uint32_t minMemoryUtilization;
+
+        /// When in-memory cleaning is enabled, then this is the ratio of
+        /// nonlive memory we want to compact if our utilization is over.
+        double compactionRatio;
     } master;
 
     /**
@@ -377,6 +403,7 @@ struct ServerConfig {
             , strategy(1)
             , mockSpeed(100)
             , writeRateLimit(0)
+            , minDiskUtilization(95)
         {}
 
         /**
@@ -395,6 +422,7 @@ struct ServerConfig {
             , strategy(1)
             , mockSpeed(0)
             , writeRateLimit(0)
+            , minDiskUtilization(95)
         {}
 
         /**
@@ -413,6 +441,7 @@ struct ServerConfig {
             config.set_strategy(strategy);
             config.set_mock_speed(mockSpeed);
             config.set_write_rate_limit(writeRateLimit);
+            config.set_min_disk_utilization(minDiskUtilization);
         }
 
         /**
@@ -432,6 +461,7 @@ struct ServerConfig {
             strategy = config.strategy();
             mockSpeed = config.mock_speed();
             writeRateLimit = config.write_rate_limit();
+            minDiskUtilization = config.min_disk_utilization();
         }
 
         /**
@@ -497,6 +527,14 @@ struct ServerConfig {
          * If non-0, limit writes to backup to this many megabytes per second.
          */
         size_t writeRateLimit;
+
+        /// When log cleaning is enabled, this is
+        /// The minimum percent of backup disk utilization we will begin cleaning at
+        /// using the disk cleaner. Note that the disk cleaner may also run if the
+        /// in-memory cleaner is not working efficiently enough to keep up with the
+        /// log writes (accumulation of tombstones will eventually create such
+        /// inefficiency and requires disk cleaning to free them).
+        uint32_t minDiskUtilization;
     } backup;
 
   public:
