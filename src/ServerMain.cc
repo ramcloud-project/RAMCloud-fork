@@ -135,6 +135,16 @@ main(int argc, char *argv[])
              "default value. Currently the only other option is \"fixed:X\", "
              "where 0 <= X <= 100 represents the percentage of CPU time the "
              "disk cleaner will be limited to (the rest is for compaction).")
+            ("compactionRatio,E",
+             ProgramOptions::value<double>(&config.master.compactionRatio)->
+                default_value(0.5),
+             "When in-memory cleaning is enabled, then this is the ratio of "
+             "nonlive memory we want to compact if our utilization is over.")
+            ("dangerThreshold",
+             ProgramOptions::value<uint32_t>(
+                &config.dangerThreshold)->default_value(98),
+             "The percentage of memory or backup utilization that is dangerous "
+             "due to possibly not having enough spare RAM to perform log cleaning.")
             ("detectFailures",
              ProgramOptions::value<bool>(&config.detectFailures)->
                 default_value(true),
@@ -196,6 +206,21 @@ main(int argc, char *argv[])
                &config.backup.maxRecoveryReplicas)->default_value(20),
              "Maximum number of replicas any given master recovery will buffer "
              "in memory.")
+            ("minDiskUtilization",
+             ProgramOptions::value<uint32_t>(
+               &config.backup.minDiskUtilization)->default_value(95),
+             "When log cleaning is enabled, this is "
+             "The minimum percent of backup disk utilization we will begin cleaning at "
+             "using the disk cleaner. Note that the disk cleaner may also run if the "
+             "in-memory cleaner is not working efficiently enough to keep up with the "
+             "log writes (accumulation of tombstones will eventually create such "
+             "inefficiency and requires disk cleaning to free them).")
+            ("minMemoryUtilization",
+             ProgramOptions::value<uint32_t>(
+               &config.master.minMemoryUtilization)->default_value(90),
+             "When in-memory cleaning is enabled, then this is "
+             "The minimum percent of memory utilization we will begin cleaning at using "
+             "the in-memory cleaner.")
             ("preferredIndex",
              ProgramOptions::value<uint32_t>(
                 &config.preferredIndex)->default_value(0),

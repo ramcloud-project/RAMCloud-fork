@@ -54,6 +54,11 @@ message ServerConfig {
     /// Max number of cores to use at once for dispatch and worker threads.
     required fixed32 max_cores = 11;
 
+    /// The percentage of memory or backup utilization that is dangerous
+    /// due to possibly not having enough spare RAM to perform log cleaning.
+    /// Note that master and backup use up 12 and 13
+    required fixed32 danger_threshold = 14;
+
     /// Configuration details specific to the MasterService on a server.
     message Master {
         /// Total number bytes to use for the in-memory Log.
@@ -98,6 +103,15 @@ message ServerConfig {
         /// Specifies whether to use masterServerId plus one with wraparound 
         /// or random replication for backupServerId.
         required bool use_plusonebackup = 13;
+
+        /// When in-memory cleaning is enabled, then this is
+        /// The minimum percent of memory utilization we will begin cleaning at using
+        /// the in-memory cleaner.
+        required fixed32 min_memory_utilization = 14;
+
+        /// When in-memory cleaning is enabled, then this is the ratio of
+        /// nonlive memory we want to compact if our utilization is over.
+        required double compaction_ratio = 15;
     }
 
     /// The server's MasterService configuration, if it is running one.
@@ -133,6 +147,14 @@ message ServerConfig {
 
         /// If non-0, limit writes to backup to this many megabytes per second.
         required fixed64 write_rate_limit = 8;
+
+        /// When log cleaning is enabled, this is
+        /// The minimum percent of backup disk utilization we will begin cleaning at
+        /// using the disk cleaner. Note that the disk cleaner may also run if the
+        /// in-memory cleaner is not working efficiently enough to keep up with the
+        /// log writes (accumulation of tombstones will eventually create such
+        /// inefficiency and requires disk cleaning to free them).
+        required fixed32 min_disk_utilization = 9;
     }
 
     /// The server's BackupService configuration, if it is running one.
