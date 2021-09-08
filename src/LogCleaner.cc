@@ -761,14 +761,14 @@ LogCleaner::Balancer::isMemoryLow(CleanerThreadState* thread)
 
     // We need to clean if memory is low and there's space that could be
     // reclaimed. It's not worth cleaning if almost everything is alive.
-    int baseThreshold = std::max(90, (100 + L) / 2);
+    int baseThreshold = std::max(static_cast<int>(MIN_MEMORY_UTILIZATION), (100 + L) / 2);
     if (T < baseThreshold)
         return false;
 
     // Employ multiple threads only when we fail to keep up with fewer of them.
     if (thread->threadNumber > 0) {
         int thresh = baseThreshold + 2 * static_cast<int>(thread->threadNumber);
-        if (T < std::min(99, thresh))
+        if (T < std::min(static_cast<int>(MAX_CLEANABLE_MEMORY_UTILIZATION), thresh))
             return false;
     }
 
@@ -789,13 +789,16 @@ LogCleaner::Balancer::compactionFailed()
 LogCleaner::Balancer::CleaningTask
 LogCleaner::Balancer::requestTask(CleanerThreadState* thread)
 {
-    if (isDiskCleaningNeeded(thread))
+    // TODO: this is a hack replacement for the more comprehensive memory
+    // management logic found in the cleaner.  On a very tight timeline for
+    // the 0.7.3 release so we are just hacking to stop a really bad memory
+    // leak.
+    static uint64_t count = 0;
+    ++count;
+    if (count % 200 == 0) {
         return CLEAN_DISK;
-
-    if (!cleaner->disableInMemoryCleaning && isMemoryLow(thread))
-        return COMPACT_MEMORY;
-
-    return SLEEP;
+    }
+    return count % 25 == 0 ? COMPACT_MEMORY : SLEEP;
 }
 
 LogCleaner::TombstoneRatioBalancer::TombstoneRatioBalancer(LogCleaner* cleaner,
