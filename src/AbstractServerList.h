@@ -59,7 +59,7 @@ class ServerDetails {
         , serviceLocator()
         , session()
         , services()
-        , expectedReadMBytesPerSec()
+        , expectedReadMBytesPerSec(DEFAULT_EXPECTED_READ_MBYTES_PER_SEC)
         , status(ServerStatus::REMOVE)
         , replicationId(0)
     {}
@@ -73,7 +73,7 @@ class ServerDetails {
         , serviceLocator()
         , session()
         , services()
-        , expectedReadMBytesPerSec()
+        , expectedReadMBytesPerSec(DEFAULT_EXPECTED_READ_MBYTES_PER_SEC)
         , status(status)
         , replicationId(replicationId)
     {}
@@ -183,6 +183,11 @@ class ServerDetails {
      * services.has(BACKUP_SERVICE), invalid otherwise.
      */
     uint32_t expectedReadMBytesPerSec;
+
+    /**
+     * Default expected disk bandwidth (typically overwritten by disc benchmark on init).
+     */
+    static const uint32_t DEFAULT_EXPECTED_READ_MBYTES_PER_SEC = 1024;
 
     /**
      * Whether this server is believed to be up, crashed, or down.
